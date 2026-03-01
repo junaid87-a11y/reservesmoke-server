@@ -14,9 +14,9 @@ app.use((req, res, next) => {
   next();
 });
 
-const APP_ID = process.env.APP_ID || 'X2RDPYNGEKNPC';
-const APP_SECRET = process.env.APP_SECRET || '24a195ce-953b-7641-afa2-1a8e696d75e6';
-const MERCHANT_ID = process.env.MERCHANT_ID || '526334862889';
+const APP_ID = process.env.APP_ID || '0CFH0N2A6QXK2';
+const APP_SECRET = process.env.APP_SECRET || '3eb81abd-d545-d0da-8ff0-50eb64273dbd';
+const MERCHANT_ID = process.env.MERCHANT_ID || 'CFEPAWNB86CH1';
 const APP_PIN = process.env.APP_PIN || '1234';
 const TOKEN_FILE = '/tmp/clover_token.json';
 
@@ -34,6 +34,15 @@ function saveToken(token) {
   fs.writeFileSync(TOKEN_FILE, JSON.stringify({ token }));
 }
 
+app.get('/', (req, res) => {
+  const token = getToken();
+  if (token) {
+    res.send('<h1 style="color:green">✅ ReserveSmoke Server Connected!</h1>');
+  } else {
+    res.redirect('/connect');
+  }
+});
+
 app.get('/connect', (req, res) => {
   const oauthUrl = `https://www.clover.com/oauth/v2/authorize?client_id=${APP_ID}&response_type=token&merchant_id=${MERCHANT_ID}&redirect_uri=https://reservesmoke-server.onrender.com/callback`;
   res.redirect(oauthUrl);
@@ -43,7 +52,7 @@ app.get('/callback', (req, res) => {
   const { access_token } = req.query;
   if (access_token) {
     saveToken(access_token);
-    return res.send('<h1 style="color:green">Connected! Close this and open your app.</h1>');
+    return res.send('<h1 style="color:green">✅ Connected! Close this and open your app.</h1>');
   }
   res.status(400).send('No token received');
 });
