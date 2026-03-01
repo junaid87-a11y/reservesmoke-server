@@ -1,13 +1,11 @@
 const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
-const path = require('path');
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// CORS
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
@@ -22,7 +20,6 @@ const MERCHANT_ID = process.env.MERCHANT_ID || '526334862889';
 const APP_PIN = process.env.APP_PIN || '1234';
 const TOKEN_FILE = '/tmp/clover_token.json';
 
-// Load saved token
 function getToken() {
   try {
     if (fs.existsSync(TOKEN_FILE)) {
@@ -37,123 +34,59 @@ function saveToken(token) {
   fs.writeFileSync(TOKEN_FILE, JSON.stringify({ token }));
 }
 
-// OAuth callback - Clover redirects here with token
-app.get('/callback', (req, res) => {
-  const { access_token, merchant_id, code } = req.query;
-  
-  if (access_token) {
-    saveToken(access_token);
-    return res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-          body { font-family: sans-serif; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; background:#0a0a0a; color:white; flex-direction:column; }
-          .check { font-size:80px; margin-bottom:20px; }
-          h1 { color:#4ade80; margin:0 0 10px; }
-          p { color:#888; }
-        </style>
-      </head>
-      <body>
-        <div class="check">✅</div>
-        <h1>Connected!</h1>
-        <p>Your ReserveSmoke app is now connected to Clover.</p>
-        <p>Close this page and open your app!</p>
-      </body>
-      </html>
-    `);
-  }
-
-  // If we got a code, exchange it for token
-  if (code) {
-    axios.post('https://api.clover.com/oauth/token', null, {
-      params: { client_id: APP_ID, client_secret: APP_SECRET, code }
-    }).then(response => {
-      const token = response.data.access_token;
-      saveToken(token);
-      res.send(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <style>
-            body { font-family: sans-serif; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; background:#0a0a0a; color:white; flex-direction:column; }
-          </style>
-        </head>
-        <body>
-          <h1 style="color:#4ade80">✅ Connected to Clover!</h1>
-          <p>Close this and open your app.</p>
-        </body>
-        </html>
-      `);
-    }).catch(err => {
-      res.status(500).send('Error exchanging code: ' + err.message);
-    });
-    return;
-  }
-
-  res.status(400).send('No token received');
-});
-
-// Connect page - visit this to start OAuth
 app.get('/connect', (req, res) => {
   const oauthUrl = `https://www.clover.com/oauth/v2/authorize?client_id=${APP_ID}&response_type=token&merchant_id=${MERCHANT_ID}&redirect_uri=https://reservesmoke-server.onrender.com/callback`;
   res.redirect(oauthUrl);
 });
 
-// Health check
+app.get('/callback', (req, res) => {
+  const { access_token } = req.query;
+  if (access_token) {
+    saveToken(access_token);
+    return res.send('<h1 style="color:green">Connected! Close this and open your app.</h1>');
+  }
+  res.status(400).send('No token received');
+});
+
 app.get('/health', (req, res) => {
   const token = getToken();
   res.json({ status: 'ok', merchant: MERCHANT_ID, connected: !!token });
 });
 
-// PIN auth
 app.post('/auth/pin', (req, res) => {
   const { pin } = req.body;
   if (pin === APP_PIN) {
-    res.json({ success: true, token: 'app-session-' + Date.now() });
+    res.json({ success: true });
   } else {
     res.status(401).json({ error: 'Invalid PIN' });
   }
 });
 
-// Middleware to check Clover token
 function requireToken(req, res, next) {
   const token = getToken();
   if (!token) {
-    return res.status(503).json({ 
-      error: 'Not connected to Clover', 
-      connectUrl: 'https://reservesmoke-server.onrender.com/connect' 
-    });
+    return res.status(503).json({ error: 'Not connected', connectUrl: 'https://reservesmoke-server.onrender.com/connect' });
   }
   req.cloverToken = token;
   next();
 }
 
-// Get inventory
 app.get('/api/inventory', requireToken, async (req, res) => {
   try {
     const response = await axios.get(
       `https://api.clover.com/v3/merchants/${MERCHANT_ID}/items`,
-      {
-        headers: { Authorization: `Bearer ${req.cloverToken}` },
-        params: { limit: 1000, expand: 'categories,price' }
-      }
+      { headers: { Authorization: `Bearer ${req.cloverToken}` }, params: { limit: 1000 } }
     );
     res.json(response.data);
   } catch (err) {
-    const status = err.response?.status;
-    if (status === 401) {
-      // Token expired, clear it
+    if (err.response?.status === 401) {
       try { fs.unlinkSync(TOKEN_FILE); } catch(e) {}
-      return res.status(401).json({ error: 'Token expired, please reconnect', connectUrl: 'https://reservesmoke-server.onrender.com/connect' });
+      return res.status(401).json({ error: 'Token expired', connectUrl: 'https://reservesmoke-server.onrender.com/connect' });
     }
     res.status(500).json({ error: err.response?.data?.message || err.message });
   }
 });
 
-// Update item
 app.put('/api/inventory/:itemId', requireToken, async (req, res) => {
   try {
     const response = await axios.post(
@@ -167,7 +100,6 @@ app.put('/api/inventory/:itemId', requireToken, async (req, res) => {
   }
 });
 
-// Create item
 app.post('/api/inventory', requireToken, async (req, res) => {
   try {
     const response = await axios.post(
@@ -181,7 +113,6 @@ app.post('/api/inventory', requireToken, async (req, res) => {
   }
 });
 
-// Delete item
 app.delete('/api/inventory/:itemId', requireToken, async (req, res) => {
   try {
     await axios.delete(
@@ -194,16 +125,11 @@ app.delete('/api/inventory/:itemId', requireToken, async (req, res) => {
   }
 });
 
-// Get sales
 app.get('/api/sales', requireToken, async (req, res) => {
   try {
-    const now = Date.now();
     const response = await axios.get(
       `https://api.clover.com/v3/merchants/${MERCHANT_ID}/orders`,
-      {
-        headers: { Authorization: `Bearer ${req.cloverToken}` },
-        params: { limit: 100, filter: `createdTime>${now - 86400000}` }
-      }
+      { headers: { Authorization: `Bearer ${req.cloverToken}` }, params: { limit: 100 } }
     );
     res.json(response.data);
   } catch (err) {
@@ -212,4 +138,4 @@ app.get('/api/sales', requireToken, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`ReserveSmoke server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
